@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-require_once "Google/Cache/Abstract.php";
-require_once "Google/Cache/Exception.php";
+use Google\Auth\CacheInterface;
+use Psr\Log\LoggerInterface;
 
 /**
  * A persistent storage class based on the memcache, which is not
@@ -28,31 +28,33 @@ require_once "Google/Cache/Exception.php";
  *
  * @author Chris Chabot <chabotc@google.com>
  */
-class Google_Cache_Memcache extends Google_Cache_Abstract
+class Google_Cache_Memcache implements CacheInterface
 {
   private $connection = false;
   private $mc = false;
   private $host;
   private $port;
 
-  public function __construct(Google_Client $client)
+  /**
+   * @var use Psr\Log\LoggerInterface logger
+   */
+  private $logger;
+
+  public function __construct($host = null, $port = null, LoggerInterface $logger = null)
   {
+    $this->logger = $logger;
+
     if (!function_exists('memcache_connect') && !class_exists("Memcached")) {
-      throw new Google_Cache_Exception("Memcache functions not available");
+      $error = "Memcache functions not available";
+
+      $this->log('error', $error);
+      throw new Google_Cache_Exception($error);
     }
-    if ($client->isAppEngine()) {
-      // No credentials needed for GAE.
-      $this->mc = new Memcached();
-      $this->connection = true;
-    } else {
-      $this->host = $client->getClassConfig($this, 'host');
-      $this->port = $client->getClassConfig($this, 'port');
-      if (empty($this->host) || empty($this->port)) {
-        throw new Google_Cache_Exception("You need to supply a valid memcache host and port");
-      }
-    }
+
+    $this->host = $host;
+    $this->port = $port;
   }
-  
+
   /**
    * @inheritDoc
    */
@@ -66,12 +68,29 @@ class Google_Cache_Memcache extends Google_Cache_Abstract
       $ret = memcache_get($this->connection, $key);
     }
     if ($ret === false) {
+      $this->log(
+          'debug',
+          'Memcache cache miss',
+          array('key' => $key)
+      );
       return false;
     }
     if (is_numeric($expiration) && (time() - $ret['time'] > $expiration)) {
+      $this->log(
+          'debug',
+          'Memcache cache miss (expired)',
+          array('key' => $key, 'var' => $ret)
+      );
       $this->delete($key);
       return false;
     }
+
+    $this->log(
+        'debug',
+        'Memcache cache hit',
+        array('key' => $key, 'var' => $ret)
+    );
+
     return $ret['data'];
   }
 
@@ -94,8 +113,20 @@ class Google_Cache_Memcache extends Google_Cache_Abstract
       $rc = memcache_set($this->connection, $key, $data, false);
     }
     if ($rc == false) {
+      $this->log(
+          'error',
+          'Memcache cache set failed',
+          array('key' => $key, 'var' => $data)
+      );
+
       throw new Google_Cache_Exception("Couldn't store data in cache");
     }
+
+    $this->log(
+        'debug',
+        'Memcache cache set',
+        array('key' => $key, 'var' => $data)
+    );
   }
 
   /**
@@ -110,11 +141,17 @@ class Google_Cache_Memcache extends Google_Cache_Abstract
     } else {
       memcache_delete($this->connection, $key, 0);
     }
+
+    $this->log(
+        'debug',
+        'Memcache cache delete',
+        array('key' => $key)
+    );
   }
 
   /**
-   * Lazy initialiser for memcache connection. Uses pconnect for to take 
-   * advantage of the persistence pool where possible. 
+   * Lazy initialiser for memcache connection. Uses pconnect for to take
+   * advantage of the persistence pool where possible.
    */
   private function connect()
   {
@@ -129,9 +166,19 @@ class Google_Cache_Memcache extends Google_Cache_Abstract
     } else {
       $this->connection = memcache_pconnect($this->host, $this->port);
     }
-    
+
     if (! $this->connection) {
-      throw new Google_Cache_Exception("Couldn't connect to memcache server");
+      $error = "Couldn't connect to memcache server";
+
+      $this->log('error', $error);
+      throw new Google_Cache_Exception($error);
+    }
+  }
+
+  private function log($level, $message, $context = array())
+  {
+    if ($this->logger) {
+      $this->logger->log($level, $message, $context);
     }
   }
 }

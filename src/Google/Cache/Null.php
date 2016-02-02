@@ -15,21 +15,15 @@
  * limitations under the License.
  */
 
-require_once "Google/Cache/Abstract.php";
-require_once "Google/Cache/Exception.php";
+use Google\Auth\CacheInterface;
 
 /**
  * A blank storage class, for cases where caching is not
  * required.
  */
-class Google_Cache_Null extends Google_Cache_Abstract
+class Google_Cache_Null implements CacheInterface
 {
-  public function __construct(Google_Client $client)
-  {
-
-  }
-
-   /**
+  /**
    * @inheritDoc
    */
   public function get($key, $expiration = false)
